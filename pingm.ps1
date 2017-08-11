@@ -2,31 +2,33 @@
 .Synopsis
    Repeatedly sends pings to computers, and draws an in-console view of the results, e.g.
 
-   .............x.....................x....  | google.com (18ms)
-   ...................................x....  | 8.8.8.8 (15ms)
+   google.com | 18ms | .............x.....................x....
+   8.8.8.8    | 15ms | ...................................x....
 .DESCRIPTION
    Takes one or more ComputerNames as a parameter, or from the pipeline - names or IPs.
    Sets up a continuous loop of ping tests, and draws the last few ping results on screen.
    e.g. for pinging several things as you reboot them, and watching them come back online.
 
    Results key:
-   _ represents no data, result slots start out like this before there are results for them
    . represents a ping reply
    x represents a timeout
-   ? represents an exception during the ping attempt, or other failure
-   
-   Press Ctrl-C to break the loop and stop it running.
+   ? represents an exception or other failure during the ping
+     (space) represents a complete failure to ping
+
+   Pressing any key will break the loop and stop it running.
+
+   It will use the entire width of the console, but you can 'shrink' it with -ResultCount
 
 
    NB. 'ping' requests are usually low priority for hosts to reply to, and often dropped
-       if links are hitting bandwidth limits. A few blip timeouts when pinging over the 
+       if links are hitting bandwidth limits. A few blip timeouts when pinging over the
        internet is quite common, and you can't reliably use "one failure" to indicate a
        host is offline or has network problems.
 .EXAMPLE
-   Ping your local network firewall, Google out on the internet, and a remote machine 
+   Ping your local network firewall, Google out on the internet, and a remote machine
    at one of your other offices, so that when you reboot your firewall you can confirm
    it comes back online, the internet connection comes up, and the VPN comes up.
-   
+
    PS D:\> pingm.ps1 192.168.0.1, google.com, 10.200.50.50
 .EXAMPLE
    Use it as a rudimentary ping sweep to ping the first 10 IPs in 192.168.1.0/24:
@@ -48,39 +50,70 @@
 [CmdletBinding()]
 Param
 (
-    [Parameter(Mandatory=$true, 
-                ValueFromPipeline=$true,
-                ValueFromPipelineByPropertyName=$true, 
-                Position=0)]
-    [ValidateNotNullOrEmpty()]
-    [string[]]$ComputerName,
+	[Parameter(Mandatory = $true,
+		ValueFromPipeline = $true,
+		ValueFromPipelineByPropertyName = $true,
+		Position = 0)]
+	[ValidateNotNullOrEmpty()]
+	[string[]]$ComputerName,
 
-
-    # Number of pings to show
-    [Parameter(Position=1)]
-    [int]$ResultCount = 50
+	# Number of pings to show
+	[Parameter(Position = 1)]
+	[int]$ResultCount = 0
 )
 
-
-
 # Gather up pipeline input, if there was any
-    $PipelineItems = @($input)
-    if ($PipelineItems.Count)
-    {
-        $ComputerName = $PipelineItems
-    }
+$PipelineItems = @($input)
+if ($PipelineItems.Count) {
+	$ComputerName = $PipelineItems
+}
 
+# Set some defaults
+# Note: The '- 15' in ScreenWidth is allowance for the time column
+[int] $ScreenWidth = ($Host.UI.RawUI.WindowSize.Width - 15)
+[int] $longest = 0
+# This dummy keeps the timeout from being a problem ... it fails quick
+[string] $DummyIP = '127.0.0.1.2'
 
+# Validate computernames
+Write-Host "Validating/Looking up hosts..." -ForegroundColor Yellow
 
-# Validate computernames 
-# - stop script if anything is not an IP address, and can't be resolved to one.
-$ComputerName | 
-    Where-Object   { -not ($_ -as [ipaddress]) } |
-    ForEach-Object {
-        $null = Resolve-DnsName $_ -ErrorAction Stop
-    }
+# Setup the data store for each computer, with a pinger, and a store for previous results
+[array] $PingData = foreach ($Computer in $ComputerName) {
+	if ($Computer.Length -gt $longest) { $longest = $Computer.Length }
 
+	# Try to remove Name Lookups and display ping 'validity'
+	write-host "  $($Computer) is " -NoNewline
+	[string] $IPToPing = $Computer
+	if (-not ($Computer -as [ipaddress])) {
+		$IPToPing = (Resolve-DnsName $Computer -ErrorAction SilentlyContinue |
+				Where-Object { $_.IP4Address -ne $null } | Select-Object -first 1).IP4Address
+		if (-not ($IPToPing)) {
+			$IPToPing = $DummyIP
+			write-host "Invalid - Can't resolve" -ForegroundColor Red
+		} else {
+			Write-Host "Valid" -ForegroundColor Green -NoNewline
+			Write-Host " - $($IPToPing)"
+		}
+	} else {
+		Write-Host "Valid" -ForegroundColor Green
+	}
 
+	@{
+		'Name'       = $Computer
+		'Pinger'     = New-Object -TypeName System.Net.NetworkInformation.Ping
+		'Results'    = New-Object -TypeName System.Collections.Queue($ResultCount)
+		'LastResult' = @{}
+		'IPToPing'   = $IPToPing
+	}
+}
+
+if ($ResultCount -eq 0) {
+	$ResultCount = ($ScreenWidth - $longest)
+}
+
+#let the user see the validated responses... but not for too long
+start-sleep 1
 
 # Redrawing the screen with Clear-Host causes it to flicker; each line is arranged
 # to be the same length, so moving the cursor back to the top can overwrite them
@@ -88,162 +121,149 @@ $ComputerName |
 # method if supported, falling back to Clear-Host
 $UseClearHostWhenRedrawing = $false
 try {
-    [System.Console]::SetCursorPosition(0, 0)
+	[System.Console]::SetCursorPosition(0, 0)
 } catch [System.IO.IOException] {
-    $UseClearHostWhenRedrawing = $true
+	$UseClearHostWhenRedrawing = $true
 }
-
-
 
 # Clear host anyway, for the first run.
 Clear-Host
+# Write the header
+Write-Host " " -NoNewline
+Write-Host "Host".PadLeft($longest / 2).PadRight($longest) -NoNewline -ForegroundColor White -BackgroundColor DarkGray
+Write-Host " |    Time |"  -NoNewline  -ForegroundColor White -BackgroundColor DarkGray
+Write-Host " Responses" -NoNewline -ForegroundColor White -BackgroundColor DarkGray
+write-host $(" " * ($ResultCount - "Responses".Length)) -ForegroundColor White -BackgroundColor DarkGray
 
-
-
-# Setup the data store for each computer, with a pinger, and a store for previous results
-[array]$PingData = foreach($Computer in $ComputerName)
-{
-    @{
-        'Name'       = $Computer
-        'Pinger'     = New-Object -TypeName System.Net.NetworkInformation.Ping
-        'Results'    = New-Object -TypeName System.Collections.Queue($ResultCount)
-        'LastResult' = @{}
-    }
-}
-
-
-
-# Initialise the results stores for each computer with '_' entries
-foreach ($Item in $PingData)
-{
-    for ($Filler = 0; $Filler -lt $ResultCount; $Filler++)
-    {
-        $Item.Results.Enqueue('_')
-    }
-}
-
-
+# Allows Control-C to abort via the 'Any key will quit' but not exit as error
+[console]::TreatControlCAsInput = $true
 
 # Run the main code loop - ping forever
-while ($true)
-{
+while ($true) {
+	if ([console]::KeyAvailable) {
+		# Any key will quit
+		$x = [System.Console]::ReadKey($true)
 
+		switch ($x.key) {
+			Default { Write-host "`nExiting..." -ForegroundColor Green; exit }
+		}
+	} else {
 
-    # Send pings to each computer in the background
-        [array]$PingTasks = foreach($Item in $PingData)
-        {
-            $Item.Pinger.SendPingAsync($Item.Name)
-                # NB. it is possible to set a timeout in ms here, 
-                #     but it doesn't work reliably, reporting false
-                #     TimedOut replies even when replies do come back,
-                #     so I removed it and leave the default.
-        }
+		# Send pings to each computer in the background
+		[array]$PingTasks = foreach ($Item in $PingData) {
+			# Need to add a try/catch around this, but major rework reqiured...
+			# Basically, no network, errors...
+			$Item.Pinger.SendPingAsync($Item.IPToPing)
+			# NB. it is possible to set a timeout in ms here,
+			#     but it doesn't work reliably, reporting false
+			#     TimedOut replies even when replies do come back,
+			#     so I removed it and leave the default.
+		}
 
+		# Wait for all the results
+		try {
+			[Threading.Tasks.Task]::WaitAll($PingTasks)
+		} catch [AggregateException] {
+			# This happens e.g. if there's a failed DNS lookup in one of the tasks
+			# Just going to let it happen, silence it, check the results later,
+			# and display failed tasks differently.
+		}
 
+		# Update PingData store with results for each computer
+		0..($PingTasks.Count - 1) | ForEach-Object {
+			$Task = $PingTasks[$_]
+			$ComputerData = $PingData[$_]
 
-    # Wait for all the results
-        try {
-            [Threading.Tasks.Task]::WaitAll($PingTasks)
-        } catch [AggregateException] {
-            # This happens e.g. if there's a failed DNS lookup in one of the tasks
-            # Just going to let it happen, silence it, check the results later,
-            # and display failed tasks differently.
-        }
+			if ($Task.Status -ne 'RanToCompletion') {
+				$ComputerData.Results.Enqueue('')
+			} else {
+				$ComputerData.LastResult = $Task.Result
 
+				# see https://msdn.microsoft.com/en-us/library/system.net.networkinformation.ipstatus(v=vs.110).aspx
+				switch ($Task.Result.Status) {
+					'Success' { $ComputerData.Results.Enqueue('.') }
+					'TimedOut' { $ComputerData.Results.Enqueue('x') }
+					Default { $ComputerData.Results.Enqueue('?') }
+				}
+			}
+			# Stop results store growing forever, remove old entries if they get too big.
+			if ($ComputerData.Results.Count -gt $ResultCount) {
+				$null = $ComputerData.Results.DeQueue()
+			}
+		}
 
+		# ReDraw screen
+		if ($UseClearHostWhenRedrawing) {
+			Clear-Host
+		} else {
+			$CursorPosition = $Host.UI.RawUI.CursorPosition
+			$CursorPosition.X = 0
+			$CursorPosition.Y = 1
+			$Host.UI.RawUI.CursorPosition = $CursorPosition
+		}
 
-    # Update PingData store with results for each computer
-        0..($PingTasks.Count-1) | ForEach-Object {
-                
-            $Task         = $PingTasks[$_]
-            $ComputerData = $PingData[$_]
+		# Draw a line of results for each computer, with color indicating ping reply or not
+		foreach ($Item in $PingData) {
+			write-host " " -NoNewline
+			# Draw computer name with colour
+			if ($Item.LastResult.Status -eq 'Success') {
+				Write-Host (($Item.Name).PadRight($longest)) -BackgroundColor DarkGreen -NoNewline
+			} else {
+				Write-Host (($Item.Name).PadRight($longest)) -BackgroundColor DarkRed -NoNewline
+			}
+			write-host ' | ' -NoNewline
 
-            if ($Task.Status -ne 'RanToCompletion')
-            {
-                $ComputerData.Results.Enqueue('?')
-            }
-            else
-            {
-                $ComputerData.LastResult = $Task.Result
-                    
-                switch ($Task.Result.Status)
-                {
-                    'Success'  { $ComputerData.Results.Enqueue('.') }
-                    'TimedOut' { $ComputerData.Results.Enqueue('x') }
-                }
-                    
-            }  
-        }
+			# Handle ping to make it fixed width -
+			[string] $PingColor = 'green'
+			if ($Item.LastResult.Status -eq 'Success') {
+				if (1000 -le $Item.LastResult.RoundTripTime) {
+					$PingText = ' 999+ms '
+					$PingColor = 'red'
+				} else {
+					$PingText = ' {0}ms ' -f $Item.LastResult.RoundTripTime.ToString().PadLeft(4, ' ')
+					if ($Item.LastResult.RoundTripTime -gt 250) { $PingColor = 'yellow' }
+					elseif ($Item.LastResult.RoundTripTime -gt 700) { $PingColor = 'red' }
+				}
+			} else {
+				$PingText = '  ----- '
+				$PingColor = 'red'
+			}
 
+			# Draw ping text and computer name
+			Write-Host $PingText -NoNewline -ForegroundColor $PingColor
 
+			# Draw the results array
+			write-host '| ' -NoNewline
 
-    # Stop results store growing forever, remove old entries if they get too big.
-        foreach ($Item in $PingData)
-        {
-            while ($Item.Results.Count -gt $ResultCount)
-            {
-                $null = $Item.Results.DeQueue()
-            }
-        }
+			## This is WAY too slow... revisit some day... prolly not
+			# [char[]] $ResultChars = ([regex]::Matches(($Item.Results -join ''), '.', 'RightToLeft').Value)
+			# foreach ($c in $ResultChars) {
+			# 	switch ($c) {
+			# 		'.' { $ResultColor = 'green' }
+			# 		'x' { $ResultColor = 'red' }
+			# 		'?' { $ResultColor = 'yellow' }
+			# 		Default { $ResultColor = 'gray' }
+			# 	}
+			# 	write-host $c -ForegroundColor $ResultColor -NoNewline
+			# }
+			# write-host ""
+			Write-Host (([regex]::Matches(($Item.Results -join ''), '.', 'RightToLeft').Value -join '') )
+		}
 
+		Write-Host " " -NoNewline
+		write-host $(" " * ($ResultCount + $longest + " |  -----  | ".Length)) -ForegroundColor White -BackgroundColor DarkGray
+		Write-Host ""
+		Write-Host ' ________Legend________'
+		Write-Host '   [.]   reply'
+		Write-Host '   [x]   timeout'
+		Write-Host '   [?]   failure'
+		Write-Host '   [ ]   abject failure'
 
+		# Delay restarting the ping loop
+		# Try to be 1 second wait, minus the time spent waiting for the slowest ping reply.
+		## maybe [math]::abs( -10 )  ##  yields  10
 
-    # ReDraw screen
-        if ($UseClearHostWhenRedrawing)
-        {
-            Clear-Host
-        }
-        else
-        {
-            $CursorPosition = $Host.UI.RawUI.CursorPosition
-            $CursorPosition.X = 0
-            $CursorPosition.Y = 0
-            $Host.UI.RawUI.CursorPosition = $CursorPosition
-        }
-
-
-
-        # Draw a line of results for each computer, with color indicating ping reply or not
-        foreach ($Item in $PingData)
-        {
-            # Draw the results array
-            Write-Host (($Item.Results -join '') + ' | ') -NoNewline
-
-            # Handle ping to make it fixed width - 
-            $PingText = if ($Item.LastResult.Status -eq 'Success')
-            {
-                if (1000 -le $Item.LastResult.RoundTripTime)
-                {
-                     '(999+ms)'
-                }
-                else
-                {
-                    '({0}ms)' -f $Item.LastResult.RoundTripTime.ToString().PadLeft(4, ' ')
-                }
-            }
-            else
-            {
-                '(----ms)'
-            }
-
-            # Draw ping text and computer name
-            Write-Host "$PingText | " -NoNewline
-
-            # Draw computer name with colour
-            if ($Item.LastResult.Status -eq 'Success')
-            {
-                Write-Host ($Item.Name) -BackgroundColor DarkGreen
-            }
-            else
-            {
-                Write-Host ($Item.Name) -BackgroundColor DarkRed
-            }
-        }
-
-
-
-    # Delay restarting the ping loop
-    # Try to be 1 second wait, minus the time spent waiting for the slowest ping reply.
-        $Delay = 1000 - ($PingData.lastresult.roundtriptime | Sort-Object | Select-Object -Last 1)
-        Start-Sleep -MilliSeconds $Delay
+		$Delay = 1000 - ($PingData.lastresult.roundtriptime | Sort-Object | Select-Object -Last 1)
+		Start-Sleep -MilliSeconds $Delay
+	}
 }
