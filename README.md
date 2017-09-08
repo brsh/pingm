@@ -5,7 +5,7 @@
    e.g.
 
    ![Animated example run of pingm tool](https://github.com/brsh/pingm/blob/master/example.gif)
-   ![Static example of BRSH changes to pingm tool](https://github.com/brsh/pingm/blob/master/pingm.png)
+   ![Static example of BRSH changes to pingm tool](https://github.com/brsh/pingm/blob/master/pingm.PNG)
 
 Why not `Test-NetConnection`? Because that will send four pings to the first host, then four to the next host, etc. then exit. This will ping all hosts repeatedly in a loop.
 
