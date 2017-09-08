@@ -3,8 +3,9 @@
    Sends continuous pings to computers, and draws an in-console view of the results
 
    e.g.
-   
-   ![Animated example run of pingm tool](https://github.com/HumanEquivalentUnit/pingm/blob/master/example.gif)
+
+   ![Animated example run of pingm tool](https://github.com/brsh/pingm/blob/master/example.gif)
+   ![Static example of BRSH changes to pingm tool](https://github.com/brsh/pingm/blob/master/pingm.png)
 
 Why not `Test-NetConnection`? Because that will send four pings to the first host, then four to the next host, etc. then exit. This will ping all hosts repeatedly in a loop.
 
@@ -12,7 +13,7 @@ Why not `Test-NetConnection`? Because that will send four pings to the first hos
    Ping a local gateway, an internet host, and a remote machine over a VPN
    so that when you reboot the router, you can confirm router, WAN links and VPNs
    all come online, without running three separate pings by hand.
-   
+
    `PS D:\> .\pingm.ps1 192.168.0.1, google.com, 10.200.50.50`
 
 ## Example
@@ -36,16 +37,16 @@ Why not `Test-NetConnection`? Because that will send four pings to the first hos
    e.g. for pinging several things as you reboot them, and watching them come back online.
 
    Results key:
-   
+
    - `_` represents no data, result slots start out like this before there are results for them
    - `.` represents a ping reply
    - `x` represents a timeout
    - `?` represents an exception during the ping attempt, or other failure
-   
+
    Press Ctrl-C to break the loop and stop it running.
 
 
    NB. 'ping' requests are usually low priority for hosts to reply to, and often dropped
-       if links are hitting bandwidth limits. A few blip timeouts when pinging over the 
+       if links are hitting bandwidth limits. A few blip timeouts when pinging over the
        internet is quite common, and you can't reliably use "one failure" to indicate a
        host is offline or has network problems.

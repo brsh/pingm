@@ -205,29 +205,33 @@ while ($true) {
 		# Draw a line of results for each computer, with color indicating ping reply or not
 		foreach ($Item in $PingData) {
 			write-host " " -NoNewline
-			# Draw computer name with colour
-			if ($Item.LastResult.Status -eq 'Success') {
-				Write-Host (($Item.Name).PadRight($longest)) -BackgroundColor DarkGreen -NoNewline
-			} else {
-				Write-Host (($Item.Name).PadRight($longest)) -BackgroundColor DarkRed -NoNewline
-			}
-			write-host ' | ' -NoNewline
+			# # Draw computer name with colour
+			# if ($Item.LastResult.Status -eq 'Success') {
+			# 	Write-Host (($Item.Name).PadRight($longest)) -BackgroundColor DarkGreen -NoNewline
+			# } else {
+			# 	Write-Host (($Item.Name).PadRight($longest)) -BackgroundColor DarkRed -NoNewline
+			# }
+			# write-host '  ' -NoNewline
 
-			# Handle ping to make it fixed width -
-			[string] $PingColor = 'green'
+			# Handle ping to make it fixed width and get colors
+			[string] $PingColor = 'Green'
 			if ($Item.LastResult.Status -eq 'Success') {
 				if (1000 -le $Item.LastResult.RoundTripTime) {
 					$PingText = ' 999+ms '
-					$PingColor = 'red'
+					$PingColor = 'Red'
 				} else {
 					$PingText = ' {0}ms ' -f $Item.LastResult.RoundTripTime.ToString().PadLeft(4, ' ')
 					if ($Item.LastResult.RoundTripTime -gt 250) { $PingColor = 'yellow' }
-					elseif ($Item.LastResult.RoundTripTime -gt 700) { $PingColor = 'red' }
+					elseif ($Item.LastResult.RoundTripTime -gt 700) { $PingColor = 'Red' }
 				}
 			} else {
 				$PingText = '  ----- '
-				$PingColor = 'red'
+				$PingColor = 'Red'
 			}
+
+			# Draw computer name with colour
+			Write-Host (($Item.Name).PadRight($longest + 1)) -BackgroundColor ("Dark$($PingColor)") -NoNewline
+			write-host '| ' -NoNewline
 
 			# Draw ping text and computer name
 			Write-Host $PingText -NoNewline -ForegroundColor $PingColor
@@ -235,7 +239,7 @@ while ($true) {
 			# Draw the results array
 			write-host '| ' -NoNewline
 
-			## This is WAY too slow... revisit some day... prolly not
+			## This is WAY too slow. Revisit some day...? Prolly not
 			# [char[]] $ResultChars = ([regex]::Matches(($Item.Results -join ''), '.', 'RightToLeft').Value)
 			# foreach ($c in $ResultChars) {
 			# 	switch ($c) {
@@ -247,7 +251,10 @@ while ($true) {
 			# 	write-host $c -ForegroundColor $ResultColor -NoNewline
 			# }
 			# write-host ""
-			Write-Host (([regex]::Matches(($Item.Results -join ''), '.', 'RightToLeft').Value -join '') )
+
+			$tempString = ([regex]::Matches(($Item.Results -join ''), '.', 'RightToLeft').Value -join '')
+			Write-Host $tempString.Substring(0, ($tempstring.Length - 1)) -NoNewline -ForegroundColor DarkGray
+			Write-Host $tempString.Substring(($tempstring.Length - 1)) -ForegroundColor $PingColor
 		}
 
 		Write-Host " " -NoNewline
