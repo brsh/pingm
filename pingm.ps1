@@ -48,8 +48,7 @@
    General notes
 #>
 [CmdletBinding()]
-Param
-(
+Param (
 	[Parameter(Mandatory = $true,
 		ValueFromPipeline = $true,
 		ValueFromPipelineByPropertyName = $true,
@@ -68,12 +67,27 @@ if ($PipelineItems.Count) {
 	$ComputerName = $PipelineItems
 }
 
+#Only run this in the PowerShell console (no ISE)
+if (-not ($host.Name -match 'consolehost')) {
+	"Sorry. This script only works in the PowerShell console."
+	exit
+}
+
 # Set some defaults
 # Note: The '- 15' in ScreenWidth is allowance for the time column
 [int] $ScreenWidth = ($Host.UI.RawUI.WindowSize.Width - 15)
 [int] $longest = 0
 # This dummy keeps the timeout from being a problem ... it fails quick
 [string] $DummyIP = '127.0.0.1.2'
+[int] $line = 1
+
+$Escape = "$([char]27)"
+$Red = "$Escape[0;91m"
+$White = "$Escape[1;37m"
+$Yellow = "$Escape[1;33m"
+$ColorOff = "$Escape[0m"
+$Black = "$Escape[40m"
+$Green = "$Escape[0;92m"
 
 # Validate computernames
 Write-Host "Validating/Looking up hosts..." -ForegroundColor Yellow
@@ -98,6 +112,7 @@ Write-Host "Validating/Looking up hosts..." -ForegroundColor Yellow
 	} else {
 		Write-Host "Valid" -ForegroundColor Green
 	}
+	$line += 1
 
 	@{
 		'Name'       = $Computer
@@ -105,6 +120,7 @@ Write-Host "Validating/Looking up hosts..." -ForegroundColor Yellow
 		'Results'    = New-Object -TypeName System.Collections.Queue($ResultCount)
 		'LastResult' = @{}
 		'IPToPing'   = $IPToPing
+		'Line'       = $Line
 	}
 }
 
@@ -117,13 +133,12 @@ start-sleep 1
 
 # Redrawing the screen with Clear-Host causes it to flicker; each line is arranged
 # to be the same length, so moving the cursor back to the top can overwrite them
-# but this doesn't work in PS ISE, so this tries to detect that and use the nicer
-# method if supported, falling back to Clear-Host
-$UseClearHostWhenRedrawing = $false
+# but this doesn't work in PS ISE, so we test if we can setcursorposition and
+# abort if necessary
 try {
 	[System.Console]::SetCursorPosition(0, 0)
 } catch [System.IO.IOException] {
-	$UseClearHostWhenRedrawing = $true
+	Throw "Could not access System.Console to set cursor position"
 }
 
 # Clear host anyway, for the first run.
@@ -135,6 +150,20 @@ Write-Host " |    Time |"  -NoNewline  -ForegroundColor White -BackgroundColor D
 Write-Host " Responses" -NoNewline -ForegroundColor White -BackgroundColor DarkGray
 write-host $(" " * ($ResultCount - "Responses".Length)) -ForegroundColor White -BackgroundColor DarkGray
 
+# Write the Legend
+$CursorPosition = $Host.UI.RawUI.CursorPosition
+$CursorPosition.X = 0
+$CursorPosition.Y = $Line
+$Host.UI.RawUI.CursorPosition = $CursorPosition
+Write-Host " " -NoNewline
+write-host $(" " * ($ResultCount + $longest + " |  -----  | ".Length)) -ForegroundColor White -BackgroundColor DarkGray
+Write-Host ""
+Write-Host ' ________Legend________'
+Write-Host '   [.]   reply'
+Write-Host '   [x]   timeout'
+Write-Host '   [?]   failure'
+Write-Host '   [ ]   abject failure'
+
 # Allows Control-C to abort via the 'Any key will quit' but not exit as error
 [console]::TreatControlCAsInput = $true
 
@@ -145,7 +174,13 @@ while ($true) {
 		$x = [System.Console]::ReadKey($true)
 
 		switch ($x.key) {
-			Default { Write-host "`nExiting..." -ForegroundColor Green; exit }
+			Default {
+				$CursorPosition = $Host.UI.RawUI.CursorPosition
+				$CursorPosition.X = 0
+				$CursorPosition.Y = $Line + 9
+				$Host.UI.RawUI.CursorPosition = $CursorPosition
+				Write-host "`nExiting..." -ForegroundColor Green; exit
+			}
 		}
 	} else {
 
@@ -175,15 +210,15 @@ while ($true) {
 			$ComputerData = $PingData[$_]
 
 			if ($Task.Status -ne 'RanToCompletion') {
-				$ComputerData.Results.Enqueue('')
+				$ComputerData.Results.Enqueue(' ')
 			} else {
 				$ComputerData.LastResult = $Task.Result
 
 				# see https://msdn.microsoft.com/en-us/library/system.net.networkinformation.ipstatus(v=vs.110).aspx
 				switch ($Task.Result.Status) {
-					'Success' { $ComputerData.Results.Enqueue('.') }
-					'TimedOut' { $ComputerData.Results.Enqueue('x') }
-					Default { $ComputerData.Results.Enqueue('?') }
+					'Success' { $ComputerData.Results.Enqueue("${Green}.${ColorOff}") }
+					'TimedOut' { $ComputerData.Results.Enqueue("${Red}x${ColorOff}") }
+					Default { $ComputerData.Results.Enqueue("${Yellow}?${ColorOff}") }
 				}
 			}
 			# Stop results store growing forever, remove old entries if they get too big.
@@ -192,26 +227,26 @@ while ($true) {
 			}
 		}
 
+		#'Success' { $ComputerData.Results.Enqueue(".") }
+		# 'Success' { $ComputerData.Results.Enqueue("${Green}.${ColorOff}") }
+		## 'TimedOut' { $ComputerData.Results.Enqueue("x") }
+		# 'TimedOut' { $ComputerData.Results.Enqueue("${Red}x${ColorOff}") }
+		#Default { $ComputerData.Results.Enqueue("?") }
+		# Default { $ComputerData.Results.Enqueue("${Yellow}?${ColorOff}") }
+
 		# ReDraw screen
-		if ($UseClearHostWhenRedrawing) {
-			Clear-Host
-		} else {
-			$CursorPosition = $Host.UI.RawUI.CursorPosition
-			$CursorPosition.X = 0
-			$CursorPosition.Y = 1
-			$Host.UI.RawUI.CursorPosition = $CursorPosition
-		}
+		#if ($UseClearHostWhenRedrawing) {
+		#	Clear-Host
+		#} else {
+		$CursorPosition = $Host.UI.RawUI.CursorPosition
+		$CursorPosition.X = 0
+		$CursorPosition.Y = 1
+		$Host.UI.RawUI.CursorPosition = $CursorPosition
+		#}
 
 		# Draw a line of results for each computer, with color indicating ping reply or not
 		foreach ($Item in $PingData) {
 			write-host " " -NoNewline
-			# # Draw computer name with colour
-			# if ($Item.LastResult.Status -eq 'Success') {
-			# 	Write-Host (($Item.Name).PadRight($longest)) -BackgroundColor DarkGreen -NoNewline
-			# } else {
-			# 	Write-Host (($Item.Name).PadRight($longest)) -BackgroundColor DarkRed -NoNewline
-			# }
-			# write-host '  ' -NoNewline
 
 			# Handle ping to make it fixed width and get colors
 			[string] $PingColor = 'Green'
@@ -239,38 +274,20 @@ while ($true) {
 			# Draw the results array
 			write-host '| ' -NoNewline
 
-			## This is WAY too slow. Revisit some day...? Prolly not
-			# [char[]] $ResultChars = ([regex]::Matches(($Item.Results -join ''), '.', 'RightToLeft').Value)
-			# foreach ($c in $ResultChars) {
-			# 	switch ($c) {
-			# 		'.' { $ResultColor = 'green' }
-			# 		'x' { $ResultColor = 'red' }
-			# 		'?' { $ResultColor = 'yellow' }
-			# 		Default { $ResultColor = 'gray' }
-			# 	}
-			# 	write-host $c -ForegroundColor $ResultColor -NoNewline
-			# }
-			# write-host ""
-
-			$tempString = ([regex]::Matches(($Item.Results -join ''), '.', 'RightToLeft').Value -join '')
-			Write-Host $tempString.Substring(0, ($tempstring.Length - 1)) -NoNewline -ForegroundColor DarkGray
-			Write-Host $tempString.Substring(($tempstring.Length - 1)) -ForegroundColor $PingColor
+			#$tempString = ([regex]::Matches(($Item.Results -join ''), '.', 'RightToLeft').Value -join '')
+			$temparray = @($Item.Results)
+			$temparray = $temparray[$temparray.Count..0]
+			$tempString = $temparray -join ''
+			Write-Host ${Black}$($tempString.Substring(0,1)) -NoNewline # -ForegroundColor $PingColor
+			Write-Host $tempString.Substring(1)  # -ForegroundColor DarkGray
 		}
-
-		Write-Host " " -NoNewline
-		write-host $(" " * ($ResultCount + $longest + " |  -----  | ".Length)) -ForegroundColor White -BackgroundColor DarkGray
-		Write-Host ""
-		Write-Host ' ________Legend________'
-		Write-Host '   [.]   reply'
-		Write-Host '   [x]   timeout'
-		Write-Host '   [?]   failure'
-		Write-Host '   [ ]   abject failure'
 
 		# Delay restarting the ping loop
 		# Try to be 1 second wait, minus the time spent waiting for the slowest ping reply.
+		## errors it the delay is too long, so trying floor... but
 		## maybe [math]::abs( -10 )  ##  yields  10
 
-		$Delay = 1000 - ($PingData.lastresult.roundtriptime | Sort-Object | Select-Object -Last 1)
+		$Delay = [math]::floor(1000 - ($PingData.lastresult.roundtriptime | Sort-Object | Select-Object -Last 1)) + 1
 		Start-Sleep -MilliSeconds $Delay
 	}
 }
