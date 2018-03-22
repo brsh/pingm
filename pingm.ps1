@@ -288,6 +288,7 @@ while ($true) {
 		## maybe [math]::abs( -10 )  ##  yields  10
 
 		$Delay = [math]::floor(1000 - ($PingData.lastresult.roundtriptime | Sort-Object | Select-Object -Last 1)) + 1
+		if ($Delay -lt 1) { $Delay = 250 }
 		Start-Sleep -MilliSeconds $Delay
 	}
 }
